@@ -28,6 +28,7 @@ Note:         =
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <time.h>
 /* .......................................................................... */
 
 /* ========================================================================== */
@@ -37,11 +38,6 @@ pthread_mutex_t mutex;
 pthread_cond_t ok_to_proceed;
 #define NUM_CUSTOMERS 5
 #define NUM_RESOURCES 3
-#define FALSE -1
-#define TRUE 0
-#define NO_DEADLOCK 0
-#define DEADLOCK_FOUND -1
-
 // the available amount of each resource
 int available[NUM_RESOURCES];
 // the maximum demand of each customer
@@ -55,246 +51,261 @@ int need[NUM_CUSTOMERS][NUM_RESOURCES];
 /* ========================================================================== */
 /*                          Custom function definitions                       */
 /* ========================================================================== */
-int request_resources(int my_rank, int request[]);
-
-int release_resources(int my_rank, int release[]);
-
-int safety_algo(int my_rank, int request[]);
-
-void thread_pool_loop(int my_rank);
-
-void generate_req(int request[]);
+void *thread_pool_loop(int my_rank);
+void generate_test_alloc(int request[], int proc);
+void update_avail();
+void sleep();
+void print_proc_resources(int proc);
 /* .......................................................................... */
 
 
 /* ========================================================================== */
 /*                          Main( )                                           */
 /* ========================================================================== */
-int main(int argc, char *argv[]) {
-    printf("\n bankers_algorithm.main() \n");
-    int thread;
-    pthread_t *thread_handles = malloc(NUM_CUSTOMERS * sizeof(pthread_t));
-    pthread_mutex_init(&mutex, NULL);
-    pthread_cond_init(&ok_to_proceed, NULL);
+int main(int argc, char *argv[])
+{
+	printf("\n bankers_algorithm.main() \n");
+	int thread;
+	pthread_t *thread_handles = malloc(NUM_CUSTOMERS * sizeof(pthread_t));
+	pthread_mutex_init(&mutex, NULL);
+	pthread_cond_init(&ok_to_proceed, NULL);
 
-    // spawn all threads into the banker function
-    for (thread = 0; thread < NUM_CUSTOMERS; thread++) {
-        pthread_create(&thread_handles[thread], (pthread_attr_t *) NULL, thread_pool_loop, thread);
-    }
+//	      Here is what I used for the max array
+//        7,5,3
+//        3,2,2
+//        9,0,2
+//        2,2,2
+//        4,3,3
+	maximum[0][0] = 7;
+	maximum[0][1] = 5;
+	maximum[0][2] = 3;
+	maximum[1][0] = 3;
+	maximum[1][1] = 2;
+	maximum[1][2] = 2;
+	maximum[2][0] = 9;
+	maximum[2][1] = 0;
+	maximum[2][2] = 2;
+	maximum[3][0] = 2;
+	maximum[3][1] = 2;
+	maximum[3][2] = 2;
+	maximum[4][0] = 4;
+	maximum[4][1] = 3;
+	maximum[4][2] = 3;
+	int i;
+	printf("\n    Max			Alloc		Need		Avail\n");
+	for (i = 0; i < NUM_CUSTOMERS; i++)
+	{
+		print_proc_resources(i);
+		update_avail();
+		//update_need_avail(i);
+	}
+	printf("\n");
 
-    // terminate all treads
-    for (thread = 0; thread < NUM_CUSTOMERS; thread++) {
-        pthread_join(thread_handles[thread], NULL);
-    }
+	// spawn all threads into the banker function
+	for (thread = 0; thread < NUM_CUSTOMERS; thread++)
+	{
+		pthread_create(&thread_handles[thread], (pthread_attr_t *) NULL, thread_pool_loop, thread);
+	}
 
-    // all done, relinquish system resources
-    pthread_mutex_destroy(&mutex);
-    pthread_cond_destroy(&ok_to_proceed);
-    free(thread_handles);
-    free(available);
-    free(maximum);
-    free(allocation);
-    free(need);
-    return 0;
+	// terminate all treads
+	for (thread = 0; thread < NUM_CUSTOMERS; thread++)
+	{
+		pthread_join(thread_handles[thread], NULL);
+	}
+
+	// all done, relinquish system resources
+	pthread_mutex_destroy(&mutex);
+	pthread_cond_destroy(&ok_to_proceed);
+	free(thread_handles);
+	return 0;
 }  /* main */
 /* .......................................................................... */
 
 
-void thread_pool_loop(int my_rank) {
-
-    // lock with pthread mutex lock
-    pthread_mutex_lock(&mutex);
-    printf("\n thread_pool_loop() my_rank = %d \n", my_rank);
-
-    // generate a random request list
-    int request[NUM_RESOURCES];
-    generate_req(request);
-
-
-    if (safety_algo(my_rank, request) == NO_DEADLOCK) {
-        request_resources(my_rank, request);
-    } else {
-        // generate a random release list
-        int release[NUM_RESOURCES];
-        generate_req(release);
-        release_resources(my_rank, release);
-    }
-
-    // unlock with pthread mutex lock
-    pthread_mutex_unlock(&mutex);
-}
-
-void generate_req(int request[]) {
-    srand(time(NULL));
-
-    int i;
-    for (i = 0; i < NUM_RESOURCES; i++) {
-        int random_number = ((double) rand() / (double) NUM_RESOURCES);
-        request[i] = random_number;
-        printf("\n request[%d] = %d \n", i, random_number);
-    }
-}
-
-int safety_algo(int my_rank, int request[]) {
-
-    printf("\n safety_algo() my_rank = %d \n", my_rank);
-
-    // step 1
-    int work[NUM_RESOURCES];
-    int finish[NUM_CUSTOMERS];
-    int i = 0;
-
-    for (i = 0; i < NUM_CUSTOMERS; i++) {
-        work[i] = available[i];
-        finish[i] = FALSE; // FALSE == -1
-    }
-
-    // step 2
-    do {
-        for (i = 0; i < NUM_RESOURCES; i++) {
-
-            //printf("\n finish[i] = %d \n", finish[i]);
-            printf("need[i] = %d \n", need[i]);
-            printf("work = %d \n", work);
-
-
-            if (finish[i] = 0 && need[i] <= work) {
-
-                // step 3
-                work[i] = work[i] + allocation[i];
-                finish[i] = TRUE; // TRUE == 1
-
-                // go to step 2?
-                break;
-            }
-        }
-    } while (finish[i] = 0 && need[i] <= work);
-
-    // step 4
-    int allTrue = 1;
-    for (i = 0; i < NUM_RESOURCES; i++) {
-        if (finish[i] != 1) {
-            allTrue = 0;
-        }
-    }
-
-    if (allTrue == 1) {
-        return NO_DEADLOCK;
-    } else {
-        return DEADLOCK_FOUND;
-    }
-}
-
-
-int request_resources(int customer_num, int request[]) {
-    //// Customer # 2 requesting 3 0 0 Available = 10  5  7
-
-    printf("Customer # %d requesting %d %d %d Available = %d %d %d", customer_num),
-            request[0], request[1], request[2], available[0], available[1], available[2];
-
-    int successful = 0;
-    int unsuccessful = -1;
-
-    if (customer_num == successful) {
-        return successful;
-    } else {
-        return unsuccessful;
-    }
-}
-
-int release_resources(int customer_num, int release[]) {
-
-// Customer # 4 releasing 2 1 2 Available = 7  5  7  Allocated = [0  0  0  ]
-
-    printf("Customer # %d releasing %d %d %d Available = %d %d %d", customer_num),
-            release[0], release[1], release[2], available[0], available[1], available[2];
-
-
-    int successful = 0;
-    int unsuccessful = -1;
-
-    if (customer_num == successful) {
-        return successful;
-    } else {
-        return unsuccessful;
-    }
-}
-
 /* ========================================================================== */
-/*                          THE CUSTOMERS                                         */
+/*                          thread_pool_loop( )                               */
 /* ========================================================================== */
-/*
- *
- *      CREATE N CUSTOMER THREADS
- *      EACH REQUEST AND RELEASE RESOURCES FROM THE BANK
- *      BANKER WILL GRANT REQUEST IF SAFTY ALGO IS SUCCESSFUL
- *      ELSE DENY REQUEST
- *
- *      Here is what I used for the max array
-        7,5,3
-        3,2,2
-        9,0,2
-        2,2,2
-        4,3,3
- *
- */
+void *thread_pool_loop(int my_rank)
+{
+	//#1 a process makes a request
+	int my_rank_request[NUM_RESOURCES];
+	int i;
+	for (i = 0; i < NUM_RESOURCES; i++)
+	{
+		int random_number = (rand() / (int) need[i]) % NUM_RESOURCES;
+		my_rank_request[i] = random_number;
+		allocation[my_rank][i] = my_rank_request[i];
+	}
+	//#2 make a test_alloc and test_avail
+	int test_available[NUM_RESOURCES];
+	int test_allocation[NUM_CUSTOMERS][NUM_RESOURCES];
+	int ran[NUM_CUSTOMERS];
+	ran[0] = 0;
+	ran[1] = 0;
+	ran[2] = 0;
+	ran[3] = 0;
+	ran[4] = 0;
+
+	while (1)
+	{
+				pthread_mutex_lock(&mutex);
+
+		printf("\n    Max			Alloc		Need		Avail\n");
+	for (i = 0; i < NUM_CUSTOMERS; i++)
+	{
+		print_proc_resources(i);
+		update_avail();
+		//update_need_avail(i);
+	}
+	printf("\n");
+			pthread_mutex_unlock(&mutex);
 
 
+		if (ran[my_rank] == 0) // retry with prev deadlock proc
+		{
+			pthread_mutex_lock(&mutex);
 
-//The output of the program should be the allocation, need and available arrays as the processes run and show that the result does not deadlock or get in an unsafe state.  For testing I would run it for a while, for the output you turn it, several pages of tables will be fine.
-//
-// Customer # 2 requesting 3 0 0 Available = 10  5  7
-// Customer # 4 requesting 2 1 2 Available = 7  5  7
-// Customer # 4 releasing 2 1 2 Available = 7  5  7  Allocated = [0  0  0  ]
-// Customer # 0 requesting 3 0 2 Available = 7  5  7
-// Customer # 0 releasing 3 0 2 Available = 7  5  7  Allocated = [0  0  0  ]
-// Customer # 2 releasing 3 0 0 Available = 10  5  7  Allocated = [0  0  0  ]
-// Customer # 2 requesting 6 0 2 Available = 10  5  7
-// Customer # 4 requesting 3 1 1 Available = 4  5  5
-// Customer # 3 requesting 1 1 0 Available = 1  4  4
-// Customer # 3 requesting 0 0 1 Available = 1  4  4
-// Customer # 0 requesting 2 0 1 Available = 1  4  3  INSUFFICIENT RESOURCES
-//
-// Customer # 2 releasing 6 0 2 Available = 7  4  5  Allocated = [0  0  0  ]
-// Customer # 1 requesting 0 2 0 Available = 7  4  5
-// Customer # 0 requesting 6 2 1 Available = 7  2  5
-// Customer # 2 requesting 4 0 2 Available = 7  2  5
-// Customer # 1 releasing 0 2 0 Available = 3  4  3  Allocated = [0  0  0  ]
-// Customer # 0 requesting 0 2 0 Available = 3  4  3
-// Customer # 0 releasing 0 2 0 Available = 3  4  3  Allocated = [0  0  0  ]
-// Customer # 4 releasing 3 1 1 Available = 6  5  4  Allocated = [0  0  0  ]
-// Customer # 3 releasing 0 0 1 Available = 6  5  5  Allocated = [0  0  0  ]
-// Customer # 2 releasing 4 0 2 Available = 10  5  7  Allocated = [0  0  0  ]
-// Customer # 0 requesting 7 5 2 Available = 10  5  7
-// Customer # 2 requesting 8 0 2 Available = 3  0  5  INSUFFICIENT RESOURCES
-//
-// Customer # 4 requesting INSUFFICIENT RESOURCES
-//2 2 2 Available = 3  0  5
-// Customer # 1 requesting 1 0 1 Available = 3  0  5
-// Customer # 3 requesting 0 INSUFFICIENT RESOURCES
-//2 0 Available = 2  0  4
-// Customer # 3 requesting 1 2 2 Available = 2  0  4  INSUFFICIENT RESOURCES
-//
-// Customer # 2 requesting 3 INSUFFICIENT RESOURCES
-//0 1 Available = 2  0  4
-// Customer # 4 requesting 4 0 2 Available = 2  0  4
-// Customer # 2 requesting 8 0 0 Available = 2  0  4  INSUFFICIENT RESOURCES
-//INSUFFICIENT RESOURCES
-//
-// Customer # 1 releasing 1 0 1 Available = 3  0  5  Allocated = [0  0  0  ]
-// Customer # 1 requesting 3 0 2 Available = 3  0  5
-// Customer # 1 releasing 3 0 2 Available = 3  0  5  Allocated = [0  0  0  ]
-// Customer # 0 releasing 7 5 2 Available = 10  5  7  Allocated = [0  0  0  ]
-// Customer # 3 requesting 2 0 1 Available = 10  5  7
-// Customer # 0 requesting 7 0 1 Available = 8  5  6
-// Customer # 1 requesting 1 1 1 Available = 1  5  5
-// Customer # 4 requesting 2 3 3 Available = 0  4  4  INSUFFICIENT RESOURCES
-//
-// Customer # 2 requesting 3 0 1 Available = 0  4  4  INSUFFICIENT RESOURCES
-//
-// Customer # 0 releasing 7 0 1 Available = 7  4  5  Allocated = [0  0  0  ]
-// Customer # 3 releasing 2 0 1 Available = 9  4  6  Allocated = [0  0  0  ]
-//.
-//.
-//.
-//(until you stop it)
+			// copy real values into test data structures for this proc only
+			int i, j;
+			for (i = 0; i < NUM_RESOURCES; i++)
+			{
+				//test_available[i] = my_rank_request[i];
+
+				for (j = 0; j < NUM_RESOURCES; j++)
+				{
+					test_allocation[my_rank][j] = allocation[my_rank][j];
+				}
+			}
+
+			// update_avail need for this proc only
+//			for (i = 0; i < NUM_RESOURCES; i++)
+//			{
+			for (j = 0; j < NUM_RESOURCES; j++)
+			{
+				need[my_rank][j] = maximum[my_rank][j] - test_allocation[my_rank][j];
+			}
+			//}
+
+			// calculate
+			for (i = 0; i < NUM_RESOURCES; i++)
+			{
+				for (j = 0; j < NUM_RESOURCES; j++)
+				{
+					// need = max - alloc
+					if (need[my_rank][j] < test_available[my_rank])
+					{
+						test_available[my_rank] = test_allocation[my_rank][j];
+						//available[my_rank] = test_allocation[my_rank][j];
+						ran[my_rank] = 1; // no deadlock found
+						printf(" Allocated = [%d %d %d] \n", test_allocation[my_rank][j], test_allocation[my_rank][j],
+							   test_allocation[my_rank][j]);
+					} else
+					{
+						ran[my_rank] = 0; // deadlock found
+						//printf("  INSUFFICIENT RESOURCES \n");
+					}
+				}
+			}
+
+			if (ran[0] == 1 && ran[1] == 1 && ran[2] == 1 && ran[3] == 1 && ran[4] == 1)
+			{
+				break;
+			}
+			pthread_mutex_unlock(&mutex);
+
+		} else
+		{
+			// Customer # 4 releasing 2 1 2 Available = 7  5  7  Allocated = [0  0  0  ]
+			printf("Customer # %d releasing %d %d %d. Available = %d %d %d.\n", my_rank,
+				   my_rank_request[0], my_rank_request[1], my_rank_request[2], available[0], available[1],
+				   available[2]);
+			// take a nap
+			sleep();
+		}
+	}
+}/* thread_pool_loop */
+/* .......................................................................... */
+
+void sleep()
+{
+	time_t current_time;
+	/* Obtain current time. */
+	current_time = time(NULL);
+	srand(time(NULL));
+	int wait_time = (rand() % 5);
+	time_t end_time = current_time + wait_time;
+
+	// wait a random number of seconds fro 0 to 4
+	while (end_time > current_time)
+	{
+		current_time = time(NULL);
+	}
+}
+void generate_test_alloc(int request[NUM_RESOURCES], int proc)
+{
+	int i;
+	for (i = 0; i < NUM_RESOURCES; i++)
+	{
+		int random_number = (rand() / (int) need[i]) % NUM_RESOURCES;
+		request[i] = random_number;
+		allocation[proc][i] = request[i];
+	}
+}
+void update_avail()
+{
+	int i, j;
+
+	for (i = 0; i < NUM_CUSTOMERS; i++)
+	{
+		int max_sum_col = 0;
+		int alloc_sum_col = 0;
+
+		// generate a random request list
+		int request[NUM_RESOURCES];
+		generate_test_alloc(request, i);
+
+		for (j = 0; j < NUM_RESOURCES; j++)
+		{
+			need[i][j] = maximum[i][j] - allocation[i][j];
+			max_sum_col = max_sum_col + maximum[i][j];
+			alloc_sum_col = alloc_sum_col + allocation[i][j];
+			//allocation[i][j] = maximum[i][j];
+		}
+		available[i] = max_sum_col - alloc_sum_col;
+	}
+}
+void print_proc_resources(int proc)
+{
+	int i;
+	printf("P%d  ", proc);
+
+	for (i = 0; i < NUM_RESOURCES; i++)
+	{
+		printf("%d ", maximum[proc][i]);
+
+	}
+
+	printf("		");
+
+	for (i = 0; i < NUM_RESOURCES; i++)
+	{
+		printf("%d ", allocation[proc][i]);
+	}
+	printf("		");
+
+
+		for (i = 0; i < NUM_RESOURCES; i++)
+		{
+			printf("%d ", need[proc][i]);
+		}
+		printf("		");
+
+		for (i = 0; i < NUM_RESOURCES; i++)
+		{
+			printf("%d ", available[i]);
+		}
+		printf("		");
+
+
+	printf("\n");
+}
